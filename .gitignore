@@ -1,0 +1,29 @@
+# Binaries
+/adit
+/adrecon
+
+# Build / release output
+/dist/
+/output/
+*.out
+*.test
+
+# Internal design spec / roadmap (not part of the published tool)
+/NEW_CHECKS.md
+
+# Ad-hoc report output from example runs
+/report/
+/report.xlsx
+/report.html
+/dashboard.html
+
+# lab-seed per-run artifacts (keep the scripts, ignore the state/backups)
+/contrib/lab-seed/state.json
+/contrib/lab-seed/backups/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# lab-seed DACL backups (contain real security descriptors)
+/contrib/lab-seed/*.bak
