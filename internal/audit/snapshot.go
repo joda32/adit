@@ -51,6 +51,7 @@ type Snapshot struct {
 	Groups        []*adws.Object
 	Trusts        []*adws.Object
 	DNSNodes      []*adws.Object
+	CertTemplates []*adws.Object // ADCS pKICertificateTemplate (Configuration NC)
 
 	privileged map[string]bool // SIDs considered privileged (Tier-0 groups)
 	dnToObj    map[string]*adws.Object
@@ -85,6 +86,12 @@ var domainAttrs = []string{
 	"minPwdLength", "maxPwdAge", "lockoutThreshold", "nTSecurityDescriptor", "distinguishedName", "name",
 }
 
+var certTemplateAttrs = []string{
+	"cn", "displayName", "distinguishedName", "pKIExtendedKeyUsage",
+	"msPKI-Certificate-Name-Flag", "msPKI-Enrollment-Flag", "msPKI-Private-Key-Flag",
+	"msPKI-RA-Signature", "nTSecurityDescriptor",
+}
+
 // Load queries the directory and builds a Snapshot.
 func Load(q Querier, baseDN, configDN string, cfg Config) (*Snapshot, error) {
 	cfg.defaults()
@@ -114,6 +121,12 @@ func Load(q Querier, baseDN, configDN string, cfg Config) (*Snapshot, error) {
 	s.Trusts, _ = q.Query(baseDN, "(objectCategory=trustedDomain)", trustAttrs)
 	s.DNSNodes, _ = q.Query(baseDN, "(&(objectClass=dnsNode)(|(name=wpad)(name=isatap)))",
 		[]string{"name", "distinguishedName", "nTSecurityDescriptor"})
+
+	// ADCS certificate templates live in the Configuration NC.
+	if configDN != "" {
+		tmplBase := "CN=Certificate Templates,CN=Public Key Services,CN=Services," + configDN
+		s.CertTemplates, _ = q.Query(tmplBase, "(objectClass=pKICertificateTemplate)", certTemplateAttrs)
+	}
 
 	s.build()
 	return s, nil

@@ -21,9 +21,10 @@ external runtime dependencies.
 
 - **Recon** — 31 collectors export the directory to CSV, a styled XLSX workbook,
   and a self-contained HTML dashboard.
-- **Audit** — a read-only findings engine evaluates 24 rules (DCSync, dangerous
-  ACLs, AdminSDHolder, delegation, roasting, stale/legacy objects, …) and emits
-  a severity-ranked JSON report that also leads the dashboard.
+- **Audit** — a read-only findings engine evaluates 25 rules (DCSync, dangerous
+  ACLs, AdminSDHolder, delegation, roasting, ADCS ESC1–4/9, stale/legacy
+  objects, …) and emits a severity-ranked JSON report that also leads the
+  dashboard.
 - **Reach** — route the whole thing through an HTTP CONNECT or SOCKS4/4a/5 proxy
   to audit a DC that is only reachable through a jump host.
 - **Auth** — NTLM or Kerberos, fully hand-rolled (NTLMv2 sign+seal, RFC 4121
@@ -40,7 +41,7 @@ external runtime dependencies.
 | Authentication | NTLMv2 (sign + seal) and Kerberos (ccache / keytab / password; RFC 4121 sealed GSS) |
 | Recon collectors | 31 modules (see below) → per-module CSV |
 | Reporting | Styled multi-sheet **XLSX** workbook + self-contained **HTML dashboard** (search/sort, severity badges, scroll-spy) |
-| Security audit | 24 read-only rules → severity-ranked **JSON**, also surfaced in the dashboard |
+| Security audit | 25 read-only rules (incl. ADCS ESC1–4/9) → severity-ranked **JSON**, also surfaced in the dashboard |
 | Proxy / jump host | HTTP CONNECT, SOCKS5/5h, SOCKS4/4a (with proxy auth + remote DNS) |
 | Paging | Server-side WS-Enumeration Pull paging, configurable page size |
 | Offline reporting | Rebuild XLSX/HTML from previously collected CSVs, no DC needed |
@@ -60,7 +61,7 @@ current list.
 
 ## Audit checks
 
-`-audit` runs 24 read-only rules. Findings carry a rule id, severity, affected
+`-audit` runs 25 read-only rules. Findings carry a rule id, severity, affected
 objects, evidence, and remediation, and are written to `Adit-Audit.json` (and,
 when combined with `-collect`, an "Audit Findings" section that leads the
 dashboard). The engine never reads secret attribute values (LAPS / gMSA /
@@ -71,6 +72,11 @@ BitLocker), even though the recon collectors can.
 | AD-DOM-010 | Critical | DCSync (replication) rights held by a non-Tier-0 principal |
 | AD-ACL-001/005/006/007/011–016 | Critical | Dangerous control (GenericAll/Write, WriteDACL/Owner, ForceChangePassword, Write SPN / KeyCredentialLink / member / AllowedToAct) over a privileged object |
 | AD-SDH-001/002 | Critical | Unexpected control / owner of AdminSDHolder |
+| AD-CS-001 | Critical–Medium | ESC1 — certificate template allows enrollee-supplied subject |
+| AD-CS-002 | Critical–Medium | ESC2 — Any-Purpose / no-EKU certificate template |
+| AD-CS-003 | High–Medium | ESC3 — Certificate Request Agent template |
+| AD-CS-004 | High | ESC4 — weak access control on a certificate template |
+| AD-CS-009 | High | ESC9 — certificate template lacks the security extension |
 | AD-DOM-008 | High | Reversible password encryption enabled domain-wide |
 | AD-USR-001 | High | Kerberos pre-auth disabled (AS-REP roastable) |
 | AD-USR-009 | High | Account uses DES encryption only |
@@ -208,7 +214,7 @@ internal/adws/      WS-Enumeration SOAP: RootDSE + Enumerate/Pull paging
 internal/addecode/  attribute decoders: SID, GUID, FILETIME, UAC, groupType
 internal/sd/        security-descriptor / ACL / ACE parser ([MS-DTYP])
 internal/collect/   31 collection modules + CSV output
-internal/audit/     read-only findings engine (24 rules) + JSON report
+internal/audit/     read-only findings engine (25 rules) + JSON report
 internal/report/    styled XLSX workbook + self-contained HTML dashboard
 contrib/lab-seed/   optional: seed a throwaway lab with misconfigs to exercise -audit
 ```

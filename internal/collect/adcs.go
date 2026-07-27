@@ -220,29 +220,65 @@ func certTemplateHeaders() []string {
 	}
 }
 
-// assessTemplate produces one CSV row (with ESC assessment) for a template.
-func (c *Collector) assessTemplate(o *adws.Object, domainSID string) []string {
+// Principal pairs a SID with its resolved display name.
+type Principal struct{ SID, Name string }
+
+// TemplateAssessment is the decoded facts and ESC1–4/9 evaluation of one
+// pKICertificateTemplate. It is the single source of truth shared by the
+// CertificateTemplates CSV collector and the audit engine's AD-CS rules.
+type TemplateAssessment struct {
+	EnrolleeSuppliesSubject bool
+	AllowsSAN               bool
+	HasClientAuth           bool
+	HasAnyPurpose           bool
+	HasEnrollmentAgent      bool
+	ExportableKey           bool
+	AutoEnroll              bool
+	ManagerApproval         bool
+	RASignature             int64
+	EnrollFlag              int64
+	NameFlag                int64
+	KeyFlag                 int64
+	EKUs                    string
+	Enroll                  []Principal
+	AutoEnrollP             []Principal
+	Write                   []Principal
+	Owner                   Principal
+	ESC                     []string // e.g. ["ESC1","ESC4"]
+	Risk                    string   // CRITICAL / HIGH / MEDIUM / Medium / Low / None
+	Factors                 []string
+}
+
+// AssessTemplate decodes a pKICertificateTemplate object and runs the ESC1–4/9
+// assessment. Side-effect free.
+func AssessTemplate(o *adws.Object, domainSID string) TemplateAssessment {
 	enrollFlag := intText(o, "msPKI-Enrollment-Flag")
 	nameFlag := intText(o, "msPKI-Certificate-Name-Flag")
 	keyFlag := intText(o, "msPKI-Private-Key-Flag")
 	raSig := intText(o, "msPKI-RA-Signature")
 
-	enrolleeSuppliesSubject := nameFlag&0x00000001 != 0
-	allowsSAN := nameFlag&0x00010000 != 0
+	a := TemplateAssessment{
+		EnrolleeSuppliesSubject: nameFlag&0x00000001 != 0,
+		AllowsSAN:               nameFlag&0x00010000 != 0,
+		AutoEnroll:              enrollFlag&0x00000020 != 0,
+		ManagerApproval:         enrollFlag&0x00000002 != 0,
+		ExportableKey:           keyFlag&0x00000010 != 0,
+		RASignature:             raSig,
+		EnrollFlag:              enrollFlag,
+		NameFlag:                nameFlag,
+		KeyFlag:                 keyFlag,
+	}
 	noSecurityExtension := enrollFlag&0x80000000 != 0
-	autoEnroll := enrollFlag&0x00000020 != 0
-	managerApproval := enrollFlag&0x00000002 != 0
 	authorizedSignatures := raSig > 0
-	exportableKey := keyFlag&0x00000010 != 0
 
 	var ekus []string
 	for _, v := range o.Attributes["pKIExtendedKeyUsage"] {
 		ekus = append(ekus, v.Text)
 	}
-	ekuStr := strings.Join(ekus, ", ")
-	hasClientAuth := ekuStr == "" || strings.Contains(ekuStr, ekuClientAuth)
-	hasAnyPurpose := strings.Contains(ekuStr, ekuAnyPurpose)
-	hasEnrollmentAgent := strings.Contains(ekuStr, ekuEnrollmentAgent)
+	a.EKUs = strings.Join(ekus, ", ")
+	a.HasClientAuth = a.EKUs == "" || strings.Contains(a.EKUs, ekuClientAuth)
+	a.HasAnyPurpose = strings.Contains(a.EKUs, ekuAnyPurpose)
+	a.HasEnrollmentAgent = strings.Contains(a.EKUs, ekuEnrollmentAgent)
 
 	// Parse the ACL.
 	var enroll, autoEnrollP, write []principal
@@ -260,50 +296,60 @@ func (c *Collector) assessTemplate(o *adws.Object, domainSID string) []string {
 	}
 	lowPrivWrite := anyLowPriv(write, domainSID)
 
-	esc, risk, factors := assessESC(escInput{
-		enrolleeSuppliesSubject: enrolleeSuppliesSubject,
-		allowsSAN:               allowsSAN,
-		hasClientAuth:           hasClientAuth,
-		hasAnyPurpose:           hasAnyPurpose,
-		hasEnrollmentAgent:      hasEnrollmentAgent,
+	a.ESC, a.Risk, a.Factors = assessESC(escInput{
+		enrolleeSuppliesSubject: a.EnrolleeSuppliesSubject,
+		allowsSAN:               a.AllowsSAN,
+		hasClientAuth:           a.HasClientAuth,
+		hasAnyPurpose:           a.HasAnyPurpose,
+		hasEnrollmentAgent:      a.HasEnrollmentAgent,
 		noSecurityExtension:     noSecurityExtension,
-		managerApproval:         managerApproval,
+		managerApproval:         a.ManagerApproval,
 		authorizedSignatures:    authorizedSignatures,
-		exportableKey:           exportableKey,
+		exportableKey:           a.ExportableKey,
 		haveEnrollees:           len(enroll) > 0,
 		lowPrivEnroll:           lowPrivEnroll,
 		onlyAdmins:              onlyAdmins,
 		lowPrivWrite:            lowPrivWrite,
 		ownerLowPriv:            owner.sid != "" && isLowPrivSID(owner.sid, domainSID),
 	})
+	a.Enroll = toPrincipals(enroll)
+	a.AutoEnrollP = toPrincipals(autoEnrollP)
+	a.Write = toPrincipals(write)
+	a.Owner = Principal{SID: owner.sid, Name: owner.name}
+	return a
+}
+
+// assessTemplate produces one CSV row (with ESC assessment) for a template.
+func (c *Collector) assessTemplate(o *adws.Object, domainSID string) []string {
+	a := AssessTemplate(o, domainSID)
 
 	var r row
 	r.str(text(o, "cn"))
 	r.str(text(o, "displayName"))
 	r.str(text(o, "distinguishedName"))
-	r.str(orUnknown(owner.name))
+	r.str(orUnknown(a.Owner.Name))
 	r.str(text(o, "msPKI-Template-Schema-Version"))
 	r.str(whenStr(o, "whenCreated"))
 	r.str(whenStr(o, "whenChanged"))
-	r.str(ekuStr)
-	r.boolean(enrolleeSuppliesSubject)
-	r.boolean(allowsSAN)
-	r.boolean(hasClientAuth)
-	r.boolean(hasAnyPurpose)
-	r.boolean(hasEnrollmentAgent)
-	r.boolean(exportableKey)
-	r.boolean(autoEnroll)
-	r.boolean(managerApproval)
-	r.intv(raSig)
-	r.str(fmt.Sprintf("0x%x", enrollFlag))
-	r.str(fmt.Sprintf("0x%x", nameFlag))
-	r.str(fmt.Sprintf("0x%x", keyFlag))
-	r.str(joinPrincipals(enroll))
-	r.str(joinPrincipals(autoEnrollP))
-	r.str(joinPrincipals(write))
-	r.str(joinOrNone(esc, ", ")) // ESC vulnerabilities
-	r.str(risk)
-	r.str(joinOrNone(factors, "; ")) // risk factors
+	r.str(a.EKUs)
+	r.boolean(a.EnrolleeSuppliesSubject)
+	r.boolean(a.AllowsSAN)
+	r.boolean(a.HasClientAuth)
+	r.boolean(a.HasAnyPurpose)
+	r.boolean(a.HasEnrollmentAgent)
+	r.boolean(a.ExportableKey)
+	r.boolean(a.AutoEnroll)
+	r.boolean(a.ManagerApproval)
+	r.intv(a.RASignature)
+	r.str(fmt.Sprintf("0x%x", a.EnrollFlag))
+	r.str(fmt.Sprintf("0x%x", a.NameFlag))
+	r.str(fmt.Sprintf("0x%x", a.KeyFlag))
+	r.str(joinPrincipalsP(a.Enroll))
+	r.str(joinPrincipalsP(a.AutoEnrollP))
+	r.str(joinPrincipalsP(a.Write))
+	r.str(joinOrNone(a.ESC, ", ")) // ESC vulnerabilities
+	r.str(a.Risk)
+	r.str(joinOrNone(a.Factors, "; ")) // risk factors
 	return r.cells
 }
 
@@ -363,13 +409,24 @@ func allAdmins(ps []principal) bool {
 	return true
 }
 
-func joinPrincipals(ps []principal) string {
+func toPrincipals(ps []principal) []Principal {
+	if len(ps) == 0 {
+		return nil
+	}
+	out := make([]Principal, len(ps))
+	for i, p := range ps {
+		out[i] = Principal{SID: p.sid, Name: p.name}
+	}
+	return out
+}
+
+func joinPrincipalsP(ps []Principal) string {
 	if len(ps) == 0 {
 		return "None"
 	}
 	names := make([]string, len(ps))
 	for i, p := range ps {
-		names[i] = p.name
+		names[i] = p.Name
 	}
 	return strings.Join(names, "; ")
 }
