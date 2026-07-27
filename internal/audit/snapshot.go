@@ -52,6 +52,8 @@ type Snapshot struct {
 	Trusts        []*adws.Object
 	DNSNodes      []*adws.Object
 	CertTemplates []*adws.Object // ADCS pKICertificateTemplate (Configuration NC)
+	CAs           []*adws.Object // ADCS enrollment services (pKIEnrollmentService)
+	PKIObjects    []*adws.Object // PKI objects whose DACL matters for ESC5
 
 	privileged map[string]bool // SIDs considered privileged (Tier-0 groups)
 	dnToObj    map[string]*adws.Object
@@ -92,6 +94,12 @@ var certTemplateAttrs = []string{
 	"msPKI-RA-Signature", "nTSecurityDescriptor",
 }
 
+var caAttrs = []string{
+	"cn", "dNSHostName", "distinguishedName", "certificateTemplates", "nTSecurityDescriptor",
+}
+
+var pkiACLAttrs = []string{"cn", "name", "distinguishedName", "nTSecurityDescriptor"}
+
 // Load queries the directory and builds a Snapshot.
 func Load(q Querier, baseDN, configDN string, cfg Config) (*Snapshot, error) {
 	cfg.defaults()
@@ -122,10 +130,21 @@ func Load(q Querier, baseDN, configDN string, cfg Config) (*Snapshot, error) {
 	s.DNSNodes, _ = q.Query(baseDN, "(&(objectClass=dnsNode)(|(name=wpad)(name=isatap)))",
 		[]string{"name", "distinguishedName", "nTSecurityDescriptor"})
 
-	// ADCS certificate templates live in the Configuration NC.
+	// ADCS objects live in the Configuration NC's Public Key Services container.
 	if configDN != "" {
-		tmplBase := "CN=Certificate Templates,CN=Public Key Services,CN=Services," + configDN
-		s.CertTemplates, _ = q.Query(tmplBase, "(objectClass=pKICertificateTemplate)", certTemplateAttrs)
+		pki := "CN=Public Key Services,CN=Services," + configDN
+		s.CertTemplates, _ = q.Query("CN=Certificate Templates,"+pki,
+			"(objectClass=pKICertificateTemplate)", certTemplateAttrs)
+		s.CAs, _ = q.Query("CN=Enrollment Services,"+pki,
+			"(objectClass=pKIEnrollmentService)", caAttrs)
+		// Objects whose DACL, if writable by a non-Tier-0 principal, is an ESC5
+		// escalation: NTAuthCertificates and the Certification Authorities store.
+		for _, dn := range []string{"CN=NTAuthCertificates," + pki, "CN=Certification Authorities," + pki} {
+			if o, _ := queryFirst(q, dn, "(objectClass=*)", pkiACLAttrs); o != nil {
+				s.PKIObjects = append(s.PKIObjects, o)
+			}
+		}
+		s.PKIObjects = append(s.PKIObjects, s.CAs...)
 	}
 
 	s.build()

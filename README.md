@@ -21,7 +21,7 @@ external runtime dependencies.
 
 - **Recon** — 31 collectors export the directory to CSV, a styled XLSX workbook,
   and a self-contained HTML dashboard.
-- **Audit** — a read-only findings engine evaluates 25 rules (DCSync, dangerous
+- **Audit** — a read-only findings engine evaluates 27 rules (DCSync, dangerous
   ACLs, AdminSDHolder, delegation, roasting, ADCS ESC1–4/9, stale/legacy
   objects, …) and emits a severity-ranked JSON report that also leads the
   dashboard.
@@ -41,7 +41,7 @@ external runtime dependencies.
 | Authentication | NTLMv2 (sign + seal) and Kerberos (ccache / keytab / password; RFC 4121 sealed GSS) |
 | Recon collectors | 31 modules (see below) → per-module CSV |
 | Reporting | Styled multi-sheet **XLSX** workbook + self-contained **HTML dashboard** (search/sort, severity badges, scroll-spy) |
-| Security audit | 25 read-only rules (incl. ADCS ESC1–4/9) → severity-ranked **JSON**, also surfaced in the dashboard |
+| Security audit | 27 read-only rules (incl. ADCS ESC1–4/9) → severity-ranked **JSON**, also surfaced in the dashboard |
 | Proxy / jump host | HTTP CONNECT, SOCKS5/5h, SOCKS4/4a (with proxy auth + remote DNS) |
 | Paging | Server-side WS-Enumeration Pull paging, configurable page size |
 | Offline reporting | Rebuild XLSX/HTML from previously collected CSVs, no DC needed |
@@ -61,7 +61,7 @@ current list.
 
 ## Audit checks
 
-`-audit` runs 25 read-only rules. Findings carry a rule id, severity, affected
+`-audit` runs 27 read-only rules. Findings carry a rule id, severity, affected
 objects, evidence, and remediation, and are written to `Adit-Audit.json` (and,
 when combined with `-collect`, an "Audit Findings" section that leads the
 dashboard). The engine never reads secret attribute values (LAPS / gMSA /
@@ -77,6 +77,8 @@ BitLocker), even though the recon collectors can.
 | AD-CS-003 | High–Medium | ESC3 — Certificate Request Agent template |
 | AD-CS-004 | High | ESC4 — weak access control on a certificate template |
 | AD-CS-009 | High | ESC9 — certificate template lacks the security extension |
+| AD-CS-005 | Critical/High | ESC5 — dangerous control of a PKI object (NTAuthCertificates, CA store, CA object) |
+| AD-CS-006 | Info | AD CS present — ESC6/ESC7/ESC8 need host-level verification (not observable over ADWS) |
 | AD-DOM-008 | High | Reversible password encryption enabled domain-wide |
 | AD-USR-001 | High | Kerberos pre-auth disabled (AS-REP roastable) |
 | AD-USR-009 | High | Account uses DES encryption only |
@@ -98,6 +100,12 @@ BitLocker), even though the recon collectors can.
 | AD-INT-005 | High | sIDHistory contains a privileged SID |
 
 Thresholds are tunable: `-krbtgt-max-age`, `-priv-pwd-max-age`, `-stale-days`.
+
+> ADCS note: ESC1–ESC5 and ESC9 are assessed from AD objects over ADWS. ESC6
+> (`EDITF_ATTRIBUTESUBJECTALTNAME2`), ESC7 (CA role ACLs) and ESC8 (web
+> enrollment / NTLM relay) live in the CA host registry/HTTP endpoints and are
+> not observable over ADWS — `AD-CS-006` flags that a CA exists so they can be
+> verified on the host (e.g. with Certipy).
 
 ## Getting it going
 
@@ -214,7 +222,7 @@ internal/adws/      WS-Enumeration SOAP: RootDSE + Enumerate/Pull paging
 internal/addecode/  attribute decoders: SID, GUID, FILETIME, UAC, groupType
 internal/sd/        security-descriptor / ACL / ACE parser ([MS-DTYP])
 internal/collect/   31 collection modules + CSV output
-internal/audit/     read-only findings engine (25 rules) + JSON report
+internal/audit/     read-only findings engine (27 rules) + JSON report
 internal/report/    styled XLSX workbook + self-contained HTML dashboard
 contrib/lab-seed/   optional: seed a throwaway lab with misconfigs to exercise -audit
 ```
