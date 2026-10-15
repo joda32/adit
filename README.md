@@ -19,6 +19,10 @@ external runtime dependencies.
 └────────────┘
 ```
 
+<p align="center">
+  <img src="docs/demo/adit-ludus-demo.gif" alt="adit — recon and read-only audit over ADWS" width="820">
+</p>
+
 - **Recon** — 31 collectors export the directory to CSV, a styled XLSX workbook,
   and a self-contained HTML dashboard.
 - **Audit** — a read-only findings engine evaluates 27 rules (DCSync, dangerous
