@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 	"time"
 
@@ -224,6 +225,74 @@ func TestUnconstrainedDelegationUser(t *testing.T) {
 	got := runRule(s, (*Snapshot).ruleUnconstrainedDelegation)
 	if len(got) != 1 || got[0].Affected[0].SAMAccountName != "svc-deleg" {
 		t.Fatalf("only svc-deleg should flag, got %+v", got)
+	}
+}
+
+func TestRecoverablePasswordAttr(t *testing.T) {
+	s := testSnapshot()
+	s.Users = []*adws.Object{
+		obj("sAMAccountName", "svc", "userPassword", "Secret123!"),
+		obj("sAMAccountName", "nix", "unixUserPassword", "{crypt}abcd"),
+		obj("sAMAccountName", "clean"),
+	}
+	got := runRule(s, (*Snapshot).ruleRecoverablePasswordAttr)
+	if len(got) != 2 {
+		t.Fatalf("want 2 findings, got %d: %+v", len(got), got)
+	}
+	for _, f := range got {
+		for _, v := range f.Evidence {
+			if strings.Contains(v, "Secret123!") || strings.Contains(v, "abcd") {
+				t.Errorf("evidence leaks the secret value: %q", v)
+			}
+		}
+	}
+}
+
+func TestPasswordInText(t *testing.T) {
+	s := testSnapshot()
+	s.Users = []*adws.Object{
+		obj("sAMAccountName", "a", "description", "Password: Welcome1"),
+		obj("sAMAccountName", "b", "info", "svc acct pw: S3cr3t!"),
+		obj("sAMAccountName", "c", "description", "password must be changed at next logon"), // no token
+		obj("sAMAccountName", "d", "description", "Finance department user"),
+	}
+	got := runRule(s, (*Snapshot).rulePasswordInText)
+	if len(got) != 2 {
+		t.Fatalf("want 2 findings (a,b), got %d: %+v", len(got), got)
+	}
+	for _, f := range got {
+		if f.Confidence != "Medium" {
+			t.Errorf("heuristic finding should be Medium confidence, got %q", f.Confidence)
+		}
+		if p := f.Evidence["preview"]; strings.Contains(p, "Welcome1") || strings.Contains(p, "S3cr3t!") {
+			t.Errorf("preview not redacted: %q", p)
+		}
+	}
+}
+
+func TestPreWin2000Compat(t *testing.T) {
+	s := testSnapshot()
+	grp := obj("name", "Pre-Windows 2000 Compatible Access",
+		"distinguishedName", "CN=Pre-Windows 2000 Compatible Access,CN=Builtin,DC=lab,DC=local",
+		"member", "CN=S-1-5-11,CN=ForeignSecurityPrincipals,DC=lab,DC=local", // Authenticated Users -> Medium
+		"member", "CN=S-1-1-0,CN=ForeignSecurityPrincipals,DC=lab,DC=local", // Everyone -> High
+		"member", "CN=Helpdesk,CN=Users,DC=lab,DC=local") // ordinary -> ignored
+	grp = withBin(grp, "objectSid", encodeSID(32, 554)) // S-1-5-32-554
+	s.Groups = []*adws.Object{grp}
+
+	got := runRule(s, (*Snapshot).rulePreWin2000Compat)
+	if len(got) != 2 {
+		t.Fatalf("want 2 findings, got %d: %+v", len(got), got)
+	}
+	sev := map[string]Severity{}
+	for _, f := range got {
+		sev[f.Affected[0].ObjectSID] = f.Severity
+	}
+	if sev["S-1-1-0"] != High {
+		t.Errorf("Everyone should be High, got %q", sev["S-1-1-0"])
+	}
+	if sev["S-1-5-11"] != Medium {
+		t.Errorf("Authenticated Users should be Medium, got %q", sev["S-1-5-11"])
 	}
 }
 

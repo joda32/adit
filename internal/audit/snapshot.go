@@ -65,6 +65,8 @@ var userAttrs = []string{
 	"servicePrincipalName", "sIDHistory", "pwdLastSet", "lastLogonTimestamp", "memberOf",
 	"primaryGroupID", "msDS-SupportedEncryptionTypes", "msDS-KeyCredentialLink",
 	"msDS-AllowedToDelegateTo", "userPrincipalName", "mail", "whenCreated", "nTSecurityDescriptor",
+	// Readable attributes that can leak credentials (AD-USR-020/021).
+	"description", "info", "comment", "userPassword", "unixUserPassword",
 }
 
 var computerAttrs = []string{
@@ -72,6 +74,7 @@ var computerAttrs = []string{
 	"sIDHistory", "pwdLastSet", "lastLogonTimestamp", "operatingSystem", "operatingSystemVersion",
 	"dNSHostName", "msDS-AllowedToActOnBehalfOfOtherIdentity", "msDS-KeyCredentialLink",
 	"msDS-SupportedEncryptionTypes", "adminCount", "primaryGroupID", "whenCreated", "nTSecurityDescriptor",
+	"description", "info", "comment",
 }
 
 var groupAttrs = []string{

@@ -25,7 +25,7 @@ external runtime dependencies.
 
 - **Recon** — 31 collectors export the directory to CSV, a styled XLSX workbook,
   and a self-contained HTML dashboard.
-- **Audit** — a read-only findings engine evaluates 27 rules (DCSync, dangerous
+- **Audit** — a read-only findings engine evaluates 30 rules (DCSync, dangerous
   ACLs, AdminSDHolder, delegation, roasting, ADCS ESC1–4/9, stale/legacy
   objects, …) and emits a severity-ranked JSON report that also leads the
   dashboard.
@@ -45,7 +45,7 @@ external runtime dependencies.
 | Authentication | NTLMv2 (sign + seal) and Kerberos (ccache / keytab / password; RFC 4121 sealed GSS) |
 | Recon collectors | 31 modules (see below) → per-module CSV |
 | Reporting | Styled multi-sheet **XLSX** workbook + self-contained **HTML dashboard** (search/sort, severity badges, scroll-spy) |
-| Security audit | 27 read-only rules (incl. ADCS ESC1–4/9) → severity-ranked **JSON**, also surfaced in the dashboard |
+| Security audit | 30 read-only rules (incl. ADCS ESC1–4/9) → severity-ranked **JSON**, also surfaced in the dashboard |
 | Proxy / jump host | HTTP CONNECT, SOCKS5/5h, SOCKS4/4a (with proxy auth + remote DNS) |
 | Paging | Server-side WS-Enumeration Pull paging, configurable page size |
 | Offline reporting | Rebuild XLSX/HTML from previously collected CSVs, no DC needed |
@@ -65,7 +65,7 @@ current list.
 
 ## Audit checks
 
-`-audit` runs 27 read-only rules. Findings carry a rule id, severity, affected
+`-audit` runs 30 read-only rules. Findings carry a rule id, severity, affected
 objects, evidence, and remediation, and are written to `Adit-Audit.json` (and,
 when combined with `-collect`, an "Audit Findings" section that leads the
 dashboard). The engine never reads secret attribute values (LAPS / gMSA /
@@ -102,6 +102,9 @@ BitLocker), even though the recon collectors can.
 | AD-DNS-003/004 | Medium/Low | WPAD / ISATAP record present |
 | AD-CMP-011 | Low | Stale computer account |
 | AD-INT-005 | High | sIDHistory contains a privileged SID |
+| AD-USR-020 | High | Recoverable password stored in userPassword / unixUserPassword |
+| AD-USR-021 | High | Possible password left in description / info / comment (heuristic) |
+| AD-DOM-012 | High/Medium | Everyone / Anonymous / Authenticated Users in Pre-Windows 2000 Compatible Access |
 
 Thresholds are tunable: `-krbtgt-max-age`, `-priv-pwd-max-age`, `-stale-days`.
 
@@ -226,7 +229,7 @@ internal/adws/      WS-Enumeration SOAP: RootDSE + Enumerate/Pull paging
 internal/addecode/  attribute decoders: SID, GUID, FILETIME, UAC, groupType
 internal/sd/        security-descriptor / ACL / ACE parser ([MS-DTYP])
 internal/collect/   31 collection modules + CSV output
-internal/audit/     read-only findings engine (27 rules) + JSON report
+internal/audit/     read-only findings engine (30 rules) + JSON report
 internal/report/    styled XLSX workbook + self-contained HTML dashboard
 contrib/lab-seed/   optional: seed a throwaway lab with misconfigs to exercise -audit
 ```
