@@ -8,8 +8,9 @@
 *.out
 *.test
 
-# Internal design spec / roadmap (not part of the published tool)
+# Internal design spec / roadmap / backlog (not part of the published tool)
 /NEW_CHECKS.md
+/BACKLOG.md
 
 # Ad-hoc report output from example runs
 /report/
