@@ -86,6 +86,45 @@ func TestDNSRecords(t *testing.T) {
 	})
 }
 
+// TestParseDNSNameViaMX guards the MX rdata offset: 2-byte preference, then a
+// 2-byte DNS_COUNT_NAME header, so the name's first label is at offset 4. An
+// off-by-2 (offset 2) would read the header bytes as a label and garble it.
+func TestParseDNSNameViaMX(t *testing.T) {
+	rdata := make([]byte, 4)                   // preference(2) + DNS_COUNT_NAME header(2)
+	binary.BigEndian.PutUint16(rdata[0:2], 10) // preference
+	var name []byte
+	for _, label := range []string{"mail", "corp", "local"} {
+		name = append(name, byte(len(label)))
+		name = append(name, []byte(label)...)
+	}
+	name = append(name, 0)
+	rdata = append(rdata, name...)
+
+	blob := dnsBlob(15, 1, 600, 0, rdata)
+	node := &adws.Object{Attributes: map[string][]adws.Value{
+		"name":      tv("@"),
+		"dnsRecord": binVal(blob),
+	}}
+	q := &mockQuerier{fn: func(_, filter string, _ []string) ([]*adws.Object, error) {
+		switch filter {
+		case "(objectCategory=dnsZone)":
+			return []*adws.Object{{Attributes: map[string][]adws.Value{
+				"name": tv("z"), "distinguishedName": tv("DC=z"),
+			}}}, nil
+		case "(objectCategory=dnsNode)":
+			return []*adws.Object{node}, nil
+		}
+		return nil, nil
+	}}
+	tbl, err := collect.New(q, "DC=corp,DC=local", collect.Config{}).DNSRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cell(t, tbl, 0, "Data"); got != "[10][mail.corp.local.]" {
+		t.Errorf("MX Data = %q, want [10][mail.corp.local.]", got)
+	}
+}
+
 func TestParseDNSNameViaSRV(t *testing.T) {
 	// SRV rdata: priority, weight, port (big-endian), then a length-prefixed
 	// name "_ldap.corp.local" starting at offset 8 (2-byte count header + labels).

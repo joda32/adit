@@ -301,7 +301,7 @@ func (s *Snapshot) rulePrivPwdNeverExpires() (out []Finding) {
 
 func (s *Snapshot) ruleDESOnly() (out []Finding) {
 	for _, u := range s.Users {
-		if uacOf(u).UseDESKeyOnly {
+		if uac := uacOf(u); uac.UseDESKeyOnly && uac.Enabled {
 			out = append(out, finding(affectedOf(u),
 				map[string]string{"userAccountControl": txt(u, "userAccountControl")}))
 		}
@@ -349,6 +349,16 @@ func (s *Snapshot) ruleUnconstrainedDelegation() (out []Finding) {
 		}
 		out = append(out, finding(affectedOf(c),
 			map[string]string{"userAccountControl": txt(c, "userAccountControl")}))
+	}
+	// User/service accounts with TRUSTED_FOR_DELEGATION are an equally dangerous
+	// (and classic) target. Users are never SERVER_TRUST_ACCOUNT, so no DC skip.
+	for _, u := range s.Users {
+		uac := uacOf(u)
+		if !uac.Enabled || !uac.TrustedForDelegation {
+			continue
+		}
+		out = append(out, finding(affectedOf(u),
+			map[string]string{"userAccountControl": txt(u, "userAccountControl")}))
 	}
 	return out
 }
@@ -528,7 +538,11 @@ func (s *Snapshot) ruleSIDHistoryPrivileged() (out []Finding) {
 		for _, o := range set {
 			for _, b := range binVals(o, "sIDHistory") {
 				sid := addecode.SIDToString(b)
-				if s.isPrivilegedSID(sid) {
+				// Match this domain's privileged SIDs exactly, and any built-in
+				// privileged RID regardless of domain — a sIDHistory entry
+				// carrying the root/trusted domain's Enterprise/Domain Admins is
+				// the classic cross-trust escalation and must still be flagged.
+				if s.isPrivilegedSID(sid) || hasAdminRID(sid) {
 					out = append(out, finding(affectedOf(o),
 						map[string]string{"sid_history": sid, "resolved": s.principalName(sid)}))
 				}

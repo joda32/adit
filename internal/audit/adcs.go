@@ -62,7 +62,6 @@ func (s *Snapshot) ruleADCSTemplates() (out []Finding) {
 		if len(a.ESC) == 0 {
 			continue
 		}
-		sev := escSeverity(a.Risk)
 		name := firstNonEmpty(txt(o, "displayName"), txt(o, "cn"))
 		for _, esc := range a.ESC {
 			meta, ok := escRuleMeta[esc]
@@ -72,7 +71,7 @@ func (s *Snapshot) ruleADCSTemplates() (out []Finding) {
 			out = append(out, Finding{
 				RuleID:      meta.id,
 				Title:       meta.title,
-				Severity:    sev,
+				Severity:    escSeverityFor(esc, a.Risk),
 				Description: meta.description,
 				Risk:        meta.risk,
 				Remediation: meta.remediation,
@@ -93,6 +92,26 @@ func (s *Snapshot) ruleADCSTemplates() (out []Finding) {
 		}
 	}
 	return out
+}
+
+// escCeiling is the maximum severity an ESC class warrants on its own, so a
+// secondary ESC on a template does not inherit a more severe class's rating.
+var escCeiling = map[string]Severity{
+	"ESC1": Critical,
+	"ESC2": Critical,
+	"ESC3": High,
+	"ESC4": High,
+	"ESC9": High,
+}
+
+// escSeverityFor returns the per-class severity: the template's overall risk,
+// but never more severe than the ESC class's own ceiling.
+func escSeverityFor(esc, risk string) Severity {
+	sev := escSeverity(risk)
+	if ceil, ok := escCeiling[esc]; ok && sev.rank() < ceil.rank() {
+		return ceil
+	}
+	return sev
 }
 
 // escSeverity maps the collector's risk label to an audit severity.

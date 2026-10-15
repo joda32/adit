@@ -62,6 +62,39 @@ func TestCertificateTemplatesESC1(t *testing.T) {
 	}
 }
 
+// TestCertificateTemplatesESC9 guards the CT_FLAG_NO_SECURITY_EXTENSION bit
+// (0x00080000). A wrong bit (e.g. 0x80000000) silently disables ESC9 detection.
+func TestCertificateTemplatesESC9(t *testing.T) {
+	tmpl := &adws.Object{Attributes: map[string][]adws.Value{
+		"cn":                          tv("NoSecExt"),
+		"distinguishedName":           tv("CN=NoSecExt,CN=Certificate Templates,...,DC=corp,DC=local"),
+		"msPKI-Certificate-Name-Flag": tv("0"),      // not ESC1
+		"msPKI-Enrollment-Flag":       tv("524288"), // 0x00080000 NO_SECURITY_EXTENSION
+		"msPKI-RA-Signature":          tv("0"),
+		"pKIExtendedKeyUsage":         tv("1.3.6.1.5.5.7.3.2"), // client auth
+		"nTSecurityDescriptor":        bv(t, esc1SD),           // Authenticated Users enroll (low-priv)
+	}}
+	q := &mockQuerier{fn: func(_, filter string, _ []string) ([]*adws.Object, error) {
+		switch filter {
+		case "(objectCategory=domainDNS)":
+			return []*adws.Object{{Attributes: map[string][]adws.Value{
+				"objectSid": bv(t, "010400000000000515000000dcf4dc3b833d2b46828ba628"),
+			}}}, nil
+		case "(objectClass=pKICertificateTemplate)":
+			return []*adws.Object{tmpl}, nil
+		}
+		return nil, nil
+	}}
+	tbl, err := collect.New(q, "DC=corp,DC=local",
+		collect.Config{ConfigDN: "CN=Configuration,DC=corp,DC=local"}).CertificateTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cell(t, tbl, 0, "ESC Vulnerabilities"); got != "ESC9" {
+		t.Errorf("ESC Vulnerabilities = %q, want ESC9", got)
+	}
+}
+
 func TestCertificateTemplatesRequiresConfigDN(t *testing.T) {
 	q := &mockQuerier{fn: func(_, _ string, _ []string) ([]*adws.Object, error) {
 		t.Fatal("should not query without ConfigDN")

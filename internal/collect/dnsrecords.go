@@ -161,7 +161,9 @@ func parseDNSData(recordType uint16, d []byte) (typeName, data string) {
 	case 15: // MX
 		if len(d) >= 2 {
 			pref := binary.BigEndian.Uint16(d[0:2])
-			exchange, _ := parseDNSName(d, 2)
+			// 2-byte preference, then a DNS_COUNT_NAME (2-byte header + labels);
+			// the name's first label-length byte is at offset 4, not 2.
+			exchange, _ := parseDNSName(d, 4)
 			return "MX", fmt.Sprintf("[%d][%s]", pref, exchange)
 		}
 		return "MX", ""
@@ -200,7 +202,14 @@ func parseDNSData(recordType uint16, d []byte) (typeName, data string) {
 // starting at offset, returning the dotted name (trailing '.') and next offset.
 // Faithful port of the reference's parser.
 func parseDNSName(data []byte, offset int) (string, int) {
-	if len(data) == 0 || offset >= len(data) {
+	return parseDNSNameDepth(data, offset, 0)
+}
+
+// parseDNSNameDepth is parseDNSName with a recursion guard: a malformed blob
+// whose compression pointers form a cycle (or point to themselves) would
+// otherwise recurse until the stack overflows.
+func parseDNSNameDepth(data []byte, offset, depth int) (string, int) {
+	if len(data) == 0 || offset >= len(data) || depth > 16 {
 		return "", offset
 	}
 	var parts []string
@@ -219,7 +228,7 @@ func parseDNSName(data []byte, offset int) (string, int) {
 			}
 			if offset+1 < len(data) {
 				pointer := int(binary.BigEndian.Uint16(data[offset:offset+2]) & 0x3FFF)
-				pointed, _ := parseDNSName(data, pointer)
+				pointed, _ := parseDNSNameDepth(data, pointer, depth+1)
 				if pointed != "" && pointed != "." {
 					parts = append(parts, strings.TrimRight(pointed, "."))
 				}

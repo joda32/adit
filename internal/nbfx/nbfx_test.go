@@ -197,6 +197,36 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDecodeMalformedNoPanic feeds truncated and hostile NBFSE inputs and
+// requires Decode to return (not panic or hang). Regressions guarded:
+//   - fixed-width value records (Int16/32/64, Float, DateTime, Chars/Bytes16/32)
+//     used to index past a short buffer in binary.LittleEndian;
+//   - an Array record used to loop on an attacker-controlled element count.
+func TestDecodeMalformedNoPanic(t *testing.T) {
+	enc := New(NBFSE)
+	inputs := map[string][]byte{
+		"int16-no-payload":   {0x00, 0x8A},
+		"int32-truncated":    {0x00, 0x8C, 0x01},
+		"int64-no-payload":   {0x00, 0x8E},
+		"datetime-truncated": {0x00, 0x96, 0x01, 0x02},
+		"chars16-bad-len":    {0x00, 0x9A, 0xff},
+		"bytes32-bad-len":    {0x00, 0xA2, 0xff, 0xff, 0xff, 0x7f},
+		// Array of ZeroText (0-byte elements) with a large count: pre-fix this
+		// looped ~2^28 times building a string; now bounded by the buffer.
+		"array-huge-count": {0x00, 0x03, 0x40, 0x01, 0x61, 0x01, 0x81, 0xff, 0xff, 0xff, 0x7f},
+	}
+	for name, in := range inputs {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s: panicked: %v", name, r)
+				}
+			}()
+			_, _ = enc.Decode(in) // an error is fine; a panic/hang is not
+		}()
+	}
+}
+
 func TestMBIRoundTrip(t *testing.T) {
 	for _, n := range []uint32{0, 1, 0x7f, 0x80, 0x376, 0x3fff, 0x4000, 0xfffff} {
 		enc := encodeMBI(n)

@@ -44,6 +44,11 @@ func classifyDangerous(ace sd.ACE) (aclRight, bool) {
 	if ace.Type != sd.AceTypeAccessAllowed && ace.Type != sd.AceTypeAccessAllowedObject {
 		return aclRight{}, false
 	}
+	// An INHERIT_ONLY ACE grants nothing on the object itself (it only seeds
+	// child objects), so it does not confer control over this object.
+	if ace.Flags&sd.AceFlagInheritOnly != 0 {
+		return aclRight{}, false
+	}
 	switch {
 	case ace.Mask&sd.RightGenericAll != 0:
 		return aclRight{"GenericAll", "AD-ACL-001", "GenericAll over privileged object"}, true
@@ -184,6 +189,9 @@ func (s *Snapshot) ruleDCSync() (out []Finding) {
 		if ace.Type != sd.AceTypeAccessAllowed && ace.Type != sd.AceTypeAccessAllowedObject {
 			continue
 		}
+		if ace.Flags&sd.AceFlagInheritOnly != 0 {
+			continue // applies to child objects only, not the domain head
+		}
 		if ace.Mask&sd.RightGenericAll != 0 {
 			genericAll[ace.SID] = true
 		}
@@ -193,10 +201,26 @@ func (s *Snapshot) ruleDCSync() (out []Finding) {
 				getChanges[ace.SID] = true
 			case eqGUID(ace.ObjectType, sd.GUIDDSReplGetChangesAll):
 				getChangesAll[ace.SID] = true
+			case ace.ObjectType == "":
+				// A ControlAccess ACE with no ObjectType grants *all* extended
+				// rights, which includes both replication rights.
+				getChanges[ace.SID] = true
+				getChangesAll[ace.SID] = true
 			}
 		}
 	}
-	for sid := range union(getChangesAll, genericAll) {
+	// DCSync requires BOTH DS-Replication-Get-Changes and Get-Changes-All (or
+	// GenericAll, which subsumes them). Get-Changes-All alone cannot replicate.
+	dcsync := map[string]bool{}
+	for sid := range getChangesAll {
+		if getChanges[sid] {
+			dcsync[sid] = true
+		}
+	}
+	for sid := range genericAll {
+		dcsync[sid] = true
+	}
+	for sid := range dcsync {
 		if s.isExpectedController(sid, "") {
 			continue
 		}
@@ -204,7 +228,7 @@ func (s *Snapshot) ruleDCSync() (out []Finding) {
 			Affected{ObjectSID: sid, SAMAccountName: s.principalName(sid)},
 			map[string]string{
 				"principal":                      s.principalName(sid),
-				"DS-Replication-Get-Changes":     boolStr(getChanges[sid]),
+				"DS-Replication-Get-Changes":     boolStr(getChanges[sid] || genericAll[sid]),
 				"DS-Replication-Get-Changes-All": boolStr(getChangesAll[sid] || genericAll[sid]),
 			}))
 	}
@@ -256,16 +280,6 @@ func (s *Snapshot) principalName(sid string) string {
 		}
 	}
 	return sid
-}
-
-func union(ms ...map[string]bool) map[string]bool {
-	out := map[string]bool{}
-	for _, m := range ms {
-		for k := range m {
-			out[k] = true
-		}
-	}
-	return out
 }
 
 func boolStr(b bool) string {

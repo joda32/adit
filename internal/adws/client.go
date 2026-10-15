@@ -90,6 +90,7 @@ func (c *Client) Query(baseDN, filter string, attributes []string) ([]*Object, e
 	}
 
 	var objects []*Object
+	emptyPulls := 0
 	for {
 		items, done, err := c.pull(ctx)
 		if err != nil {
@@ -101,6 +102,15 @@ func (c *Client) Query(baseDN, filter string, attributes []string) ([]*Object, e
 		if done {
 			break
 		}
+		// Guard against a server that returns neither items nor EndOfSequence:
+		// without this the loop would Pull forever.
+		if len(items) == 0 {
+			if emptyPulls++; emptyPulls >= 2 {
+				break
+			}
+		} else {
+			emptyPulls = 0
+		}
 	}
 	return objects, nil
 }
@@ -110,8 +120,8 @@ func (c *Client) enumerate(baseDN, filter string, attributes []string) (string, 
 	req := fill(enumerateTemplate,
 		"{{uuid}}", newUUID(),
 		"{{fqdn}}", c.fqdn,
-		"{{filter}}", filter,
-		"{{baseobj}}", baseDN,
+		"{{filter}}", escapeXML(filter),
+		"{{baseobj}}", escapeXML(baseDN),
 		"{{attributes}}", selectionProperties(attributes),
 	)
 	env, err := c.roundTrip(req)
@@ -135,7 +145,7 @@ func (c *Client) pull(ctx string) (items []*node, done bool, err error) {
 	req := fill(pullTemplate,
 		"{{uuid}}", newUUID(),
 		"{{fqdn}}", c.fqdn,
-		"{{enum_ctx}}", ctx,
+		"{{enum_ctx}}", escapeXML(ctx),
 		"{{max_elements}}", strconv.Itoa(c.pageSize),
 	)
 	env, err := c.roundTrip(req)

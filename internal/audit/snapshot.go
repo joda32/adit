@@ -168,7 +168,8 @@ func (s *Snapshot) build() {
 
 	// Privileged group SIDs: well-known RIDs off the domain SID, plus built-in.
 	s.privileged = map[string]bool{}
-	for _, rid := range []string{"512", "516", "518", "519", "520", "521", "498", "517", "526", "527"} {
+	// 500 = built-in Administrator; the rest are built-in privileged groups.
+	for _, rid := range []string{"500", "512", "516", "518", "519", "520", "521", "498", "517", "526", "527"} {
 		if s.DomainSID != "" {
 			s.privileged[s.DomainSID+"-"+rid] = true
 		}
@@ -176,10 +177,19 @@ func (s *Snapshot) build() {
 	for _, b := range []string{"544", "548", "549", "550", "551", "552"} {
 		s.privileged["S-1-5-32-"+b] = true
 	}
-	// Any group flagged by AdminSDHolder is also privileged.
+	// Any object flagged by AdminSDHolder (adminCount=1) is also privileged —
+	// groups *and* users (e.g. named Tier-0 admins), so their control over other
+	// privileged objects is expected rather than reported as a takeover.
 	for _, g := range s.Groups {
 		if intOf(g, "adminCount") == 1 {
 			if sid := objSID(g); sid != "" {
+				s.privileged[sid] = true
+			}
+		}
+	}
+	for _, u := range s.Users {
+		if intOf(u, "adminCount") == 1 {
+			if sid := objSID(u); sid != "" {
 				s.privileged[sid] = true
 			}
 		}

@@ -15,7 +15,7 @@ var userAttributes = []string{
 	"primaryGroupID", "objectSid", "sIDHistory", "servicePrincipalName",
 	"msDS-AllowedToDelegateTo", "msDS-SupportedEncryptionTypes",
 	"givenName", "sn", "middleName", "c", "info", "userWorkstations",
-	"whenCreated", "whenChanged", "ntSecurityDescriptor",
+	"whenCreated", "whenChanged", "nTSecurityDescriptor",
 }
 
 // Users collects user objects (objectCategory=person, objectClass=user).
@@ -156,10 +156,10 @@ func (c *Collector) Users() (*Table, error) {
 	return t, nil
 }
 
-// cannotChangePasswordACL parses the ntSecurityDescriptor and reports whether
+// cannotChangePasswordACL parses the nTSecurityDescriptor and reports whether
 // the DACL denies the Change-Password right to SELF or Everyone.
 func cannotChangePasswordACL(o *adws.Object) bool {
-	vs := o.Attributes["ntSecurityDescriptor"]
+	vs := o.Attributes["nTSecurityDescriptor"]
 	if len(vs) == 0 || !vs[0].IsBinary {
 		return false
 	}

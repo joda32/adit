@@ -199,6 +199,34 @@ func TestSIDHistoryPrivileged(t *testing.T) {
 	}
 }
 
+// TestSIDHistoryCrossDomain guards cross-/root-domain privileged SID history:
+// Enterprise Admins (519) of a *different* domain (prefix S-1-5-21-9-9-9) must
+// still be flagged via the domain-independent RID match, not only this domain's.
+func TestSIDHistoryCrossDomain(t *testing.T) {
+	s := testSnapshot() // DomainSID = S-1-5-21-1-2-3
+	u := withBin(obj("sAMAccountName", "migrated"), "sIDHistory", encodeSID(21, 9, 9, 9, 519))
+	s.Users = []*adws.Object{u}
+	got := runRule(s, (*Snapshot).ruleSIDHistoryPrivileged)
+	if len(got) != 1 {
+		t.Fatalf("cross-domain Enterprise Admins SID history should flag, got %+v", got)
+	}
+}
+
+// TestUnconstrainedDelegationUser guards that user/service accounts with
+// TRUSTED_FOR_DELEGATION (not just computers) are evaluated.
+func TestUnconstrainedDelegationUser(t *testing.T) {
+	s := testSnapshot()
+	// 0x80200 = TRUSTED_FOR_DELEGATION (0x80000) + NORMAL_ACCOUNT (0x200), enabled.
+	s.Users = []*adws.Object{
+		obj("sAMAccountName", "svc-deleg", "userAccountControl", "524800"),
+		obj("sAMAccountName", "svc-normal", "userAccountControl", "512"),
+	}
+	got := runRule(s, (*Snapshot).ruleUnconstrainedDelegation)
+	if len(got) != 1 || got[0].Affected[0].SAMAccountName != "svc-deleg" {
+		t.Fatalf("only svc-deleg should flag, got %+v", got)
+	}
+}
+
 // --- ACL classification tests ---
 
 func TestClassifyDangerous(t *testing.T) {
@@ -243,6 +271,24 @@ func TestIsExpectedController(t *testing.T) {
 	}
 	if s.isExpectedController("S-1-5-21-1-2-3-1105", "") {
 		t.Error("ordinary user should not be expected")
+	}
+	// Built-in Administrator (RID 500) is Tier-0 and expected.
+	if !s.isExpectedController("S-1-5-21-1-2-3-500", "") {
+		t.Error("built-in Administrator (RID 500) should be expected")
+	}
+}
+
+// TestExpectedControllerPrivilegedUser guards that an adminCount=1 *user* (not
+// just groups) is treated as an expected controller, avoiding false-positive
+// takeover findings against named Tier-0 admins.
+func TestExpectedControllerPrivilegedUser(t *testing.T) {
+	s := testSnapshot()
+	s.Users = []*adws.Object{
+		withBin(obj("sAMAccountName", "tier0-admin", "adminCount", "1"), "objectSid", encodeSID(21, 1, 2, 3, 1107)),
+	}
+	s.build()
+	if !s.isExpectedController("S-1-5-21-1-2-3-1107", "") {
+		t.Error("adminCount=1 user should be an expected controller")
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 // in one of these is a Tier-0 group in *some* domain (user RIDs start at 1000),
 // so it is an expected controller of PKI objects even in another forest domain.
 var adminRIDs = map[string]bool{
+	"500": true, // built-in Administrator
 	"512": true, "516": true, "518": true, "519": true, "520": true,
 	"521": true, "498": true, "517": true, "526": true, "527": true,
 }

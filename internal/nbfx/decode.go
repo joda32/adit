@@ -67,6 +67,32 @@ func (r *reader) mbi() uint32 {
 
 func (r *reader) utf8() string { return string(r.take(int(r.mbi()))) }
 
+// u16/u32/u64 read fixed-width little-endian integers, returning 0 (and setting
+// r.err via take) on a short read instead of panicking in binary.LittleEndian.
+func (r *reader) u16() uint16 {
+	b := r.take(2)
+	if len(b) < 2 {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(b)
+}
+
+func (r *reader) u32() uint32 {
+	b := r.take(4)
+	if len(b) < 4 {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(b)
+}
+
+func (r *reader) u64() uint64 {
+	b := r.take(8)
+	if len(b) < 8 {
+		return 0
+	}
+	return binary.LittleEndian.Uint64(b)
+}
+
 func (r *reader) fail() {
 	if r.err == nil {
 		r.err = fmt.Errorf("nbfx: unexpected end of records at offset %d", r.pos)
@@ -232,13 +258,13 @@ func (r *reader) text(base byte, inband map[uint32]string) string {
 	case 0x88:
 		return strconv.FormatInt(int64(int8(r.u8())), 10)
 	case 0x8A:
-		return strconv.FormatInt(int64(int16(binary.LittleEndian.Uint16(r.take(2)))), 10)
+		return strconv.FormatInt(int64(int16(r.u16())), 10)
 	case 0x8C:
-		return strconv.FormatInt(int64(int32(binary.LittleEndian.Uint32(r.take(4)))), 10)
+		return strconv.FormatInt(int64(int32(r.u32())), 10)
 	case 0x8E:
-		return strconv.FormatInt(int64(binary.LittleEndian.Uint64(r.take(8))), 10)
+		return strconv.FormatInt(int64(r.u64()), 10)
 	case 0xB2:
-		return strconv.FormatUint(binary.LittleEndian.Uint64(r.take(8)), 10)
+		return strconv.FormatUint(r.u64(), 10)
 	case 0xB4:
 		if r.u8() == 1 {
 			return "True"
@@ -247,30 +273,30 @@ func (r *reader) text(base byte, inband map[uint32]string) string {
 	case 0xB6:
 		return sanitizeXML(decodeUTF16(r.take(int(r.u8()))))
 	case 0xB8:
-		return sanitizeXML(decodeUTF16(r.take(int(binary.LittleEndian.Uint16(r.take(2))))))
+		return sanitizeXML(decodeUTF16(r.take(int(r.u16()))))
 	case 0xBA:
-		return sanitizeXML(decodeUTF16(r.take(int(binary.LittleEndian.Uint32(r.take(4))))))
+		return sanitizeXML(decodeUTF16(r.take(int(r.u32()))))
 	case 0xBC:
 		prefix := string(rune('a' + r.u8()))
 		return prefix + ":" + lookupDict(r.mbi(), inband)
 	case 0x90:
-		return formatFloat(float64(math.Float32frombits(binary.LittleEndian.Uint32(r.take(4)))))
+		return formatFloat(float64(math.Float32frombits(r.u32())))
 	case 0x92:
-		return formatFloat(math.Float64frombits(binary.LittleEndian.Uint64(r.take(8))))
+		return formatFloat(math.Float64frombits(r.u64()))
 	case 0x96:
-		return formatDateTime(binary.LittleEndian.Uint64(r.take(8)))
+		return formatDateTime(r.u64())
 	case 0x98:
 		return sanitizeXML(string(r.take(int(r.u8()))))
 	case 0x9A:
-		return sanitizeXML(string(r.take(int(binary.LittleEndian.Uint16(r.take(2))))))
+		return sanitizeXML(string(r.take(int(r.u16()))))
 	case 0x9C:
-		return sanitizeXML(string(r.take(int(binary.LittleEndian.Uint32(r.take(4))))))
+		return sanitizeXML(string(r.take(int(r.u32()))))
 	case 0x9E:
 		return base64.StdEncoding.EncodeToString(r.take(int(r.u8())))
 	case 0xA0:
-		return base64.StdEncoding.EncodeToString(r.take(int(binary.LittleEndian.Uint16(r.take(2)))))
+		return base64.StdEncoding.EncodeToString(r.take(int(r.u16())))
 	case 0xA2:
-		return base64.StdEncoding.EncodeToString(r.take(int(binary.LittleEndian.Uint32(r.take(4)))))
+		return base64.StdEncoding.EncodeToString(r.take(int(r.u32())))
 	case 0xA8:
 		return ""
 	case 0xAA:
@@ -299,6 +325,12 @@ func (r *reader) array(inband map[uint32]string) string {
 	}
 	recordType := r.u8()
 	count := int(r.mbi())
+	// count is attacker-controlled; a legitimate array stores at least one byte
+	// per element, so it can never exceed the bytes remaining. Cap it to defeat
+	// a tiny message that declares billions of zero-width elements (DoS).
+	if max := len(r.data) - r.pos; count > max {
+		count = max
+	}
 	var b strings.Builder
 	for i := 0; i < count && r.err == nil; i++ {
 		b.WriteString(openTag(el))
@@ -393,11 +425,13 @@ func formatFloat(f float64) string {
 	return strconv.FormatFloat(f, 'g', -1, 64)
 }
 
-// formatDateTime renders a .NET binary datetime (ticks since 0001-01-01 in the
-// high 62 bits) as an ISO-8601 string, matching the reference formula.
+// formatDateTime renders a .NET binary datetime as an ISO-8601 string. The
+// value is ticks (100ns units) since 0001-01-01 in the low 62 bits; the top 2
+// bits are the DateTimeKind and must be masked off, not shifted out
+// (cf. .NET DateTime.FromBinary).
 func formatDateTime(raw uint64) string {
 	const ticksPerSecond = 10_000_000
-	ticks := raw >> 2
+	ticks := raw & 0x3FFFFFFFFFFFFFFF
 	secs := ticks / ticksPerSecond
 	frac := ticks % ticksPerSecond
 	// Days/seconds since year 1; use a simple civil-time conversion.

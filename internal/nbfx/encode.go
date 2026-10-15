@@ -203,8 +203,10 @@ func typeValue(raw string) (baseType byte, payload []byte) {
 		return 0x84, nil // FalseText
 	case strings.EqualFold(data, "true"):
 		return 0x86, nil // TrueText
-	case len(data) > 3 && data[1] == ':' && isDictWord(data[2:]):
-		// QNameDictionaryText 0xBC: prefix char + index
+	case len(data) > 3 && data[0] >= 'a' && data[0] <= 'z' && data[1] == ':' && isDictWord(data[2:]):
+		// QNameDictionaryText 0xBC: a single lowercase a-z prefix char (encoded
+		// as prefix-'a') + dictionary index. Non-a-z prefixes would underflow
+		// the byte and decode to a different char, so they fall through to chars.
 		return 0xBC, append([]byte{data[0] - 'a'}, encodeMBI(inverted[data[2:]])...)
 	case matchAtStart(reUniqueID, data):
 		return 0xAC, guidBytes(data[len("urn:uuid:"):]) // UniqueIdText

@@ -56,7 +56,7 @@ func (e *Encoder) Encode(xml string) ([]byte, error) {
 func (e *Encoder) Decode(data []byte) (string, error) {
 	if e.encoding == NBFSE {
 		size, n := readMBI(data)
-		if n == 0 || n+size > len(data) {
+		if n == 0 || size > len(data)-n { // overflow-safe bounds check
 			return "", fmt.Errorf("nbfx: invalid in-band dictionary size")
 		}
 		inband := parseInbandDictionary(data[n : n+size])
@@ -94,11 +94,19 @@ func readMBI(data []byte) (value, n int) {
 		value |= int(b&0x7f) << shift
 		n++
 		if b&0x80 == 0 {
+			// MultiByteInt31 encodes at most 31 bits; reject anything larger
+			// (also guards against int overflow to a negative value, which
+			// would bypass length checks on a 32-bit build).
+			if value < 0 || value > 0x7fffffff {
+				return 0, 0
+			}
 			return value, n
 		}
 		shift += 7
 	}
-	return value, n
+	// Ran out of bytes mid-varint, or a 5th byte still had the continuation
+	// bit set: a malformed / over-long varint. Signal failure with n == 0.
+	return 0, 0
 }
 
 // utf8String encodes a string as MBI(len) followed by its UTF-8 bytes.
@@ -114,7 +122,7 @@ func parseInbandDictionary(data []byte) map[uint32]string {
 	idx := uint32(1)
 	for len(data) > 0 {
 		size, n := readMBI(data)
-		if n == 0 || n+size > len(data) {
+		if n == 0 || size > len(data)-n { // overflow-safe bounds check
 			break
 		}
 		table[idx] = string(data[n : n+size])

@@ -129,7 +129,7 @@ func TestUsersCannotChangePasswordFromACL(t *testing.T) {
 	user := &adws.Object{Attributes: map[string][]adws.Value{
 		"sAMAccountName":       tv("locked"),
 		"userAccountControl":   tv("512"), // no PASSWD_CANT_CHANGE flag
-		"ntSecurityDescriptor": bv(t, sdHex),
+		"nTSecurityDescriptor": bv(t, sdHex),
 	}}
 	q := &mockQuerier{fn: func(_, _ string, _ []string) ([]*adws.Object, error) {
 		return []*adws.Object{user}, nil

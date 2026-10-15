@@ -35,6 +35,13 @@ const (
 	AceTypeSystemMandatoryLabel        = 0x11
 )
 
+// ACE header flags. [MS-DTYP] 2.4.4.1.
+const (
+	// AceFlagInheritOnly marks an ACE that applies only to child objects, not to
+	// the object carrying it, so it confers no rights over that object itself.
+	AceFlagInheritOnly = 0x08
+)
+
 // Access-mask rights relevant to AD objects. [MS-ADTS] 5.1.3.2 / [MS-DTYP] 2.4.3.
 const (
 	RightGenericRead          = 0x80000000
@@ -125,10 +132,12 @@ func Parse(b []byte) (*SecurityDescriptor, error) {
 			sd.Group = s
 		}
 	}
-	if offSacl != 0 && int(offSacl) <= len(b) {
+	// Compare as uint64 so a >2GiB offset cannot wrap to a negative int and
+	// slip past the bound on a 32-bit build.
+	if offSacl != 0 && uint64(offSacl) <= uint64(len(b)) {
 		sd.SACL = parseACL(b[offSacl:])
 	}
-	if offDacl != 0 && int(offDacl) <= len(b) {
+	if offDacl != 0 && uint64(offDacl) <= uint64(len(b)) {
 		sd.DACL = parseACL(b[offDacl:])
 	}
 	return sd, nil
@@ -136,12 +145,12 @@ func Parse(b []byte) (*SecurityDescriptor, error) {
 
 // sidAt reads a SID at offset off and returns its canonical string.
 func sidAt(b []byte, off uint32) (string, bool) {
-	if int(off)+2 > len(b) {
+	if uint64(off)+2 > uint64(len(b)) {
 		return "", false
 	}
 	subCount := int(b[off+1])
 	n := 8 + subCount*4
-	if int(off)+n > len(b) {
+	if uint64(off)+uint64(n) > uint64(len(b)) {
 		return "", false
 	}
 	return addecode.SIDToString(b[off : int(off)+n]), true

@@ -151,22 +151,44 @@ type sealedConn struct {
 	rbuf   []byte
 }
 
-// Write seals p as a single NNS data message. Callers (the NMF layer) write one
-// complete record per call, which comfortably fits one data message.
+// maxDataChunk bounds a single NNS data message. The upgraded transport is a
+// .NET NegotiateStream, whose receive side rejects any frame larger than its
+// 64 KiB MaxReadFrameSize, so a larger record must be split across several
+// sealed data messages. 63 KiB leaves room for the per-message signature.
+const maxDataChunk = 63 * 1024
+
+// maxDataFrame bounds a single inbound sealed data message, so a malicious or
+// corrupt 4-byte length prefix cannot drive a multi-gigabyte allocation.
+const maxDataFrame = 64 << 20 // 64 MiB (WCF's default maxReceivedMessageSize)
+
+// Write seals p across one or more NNS data messages, each capped to
+// maxDataChunk so none exceeds the NegotiateStream frame limit. Each chunk is
+// sealed independently (advancing the per-direction sequence number), which the
+// receiver reassembles transparently.
 func (c *sealedConn) Write(p []byte) (int, error) {
-	sealed, err := c.sealer.Seal(p)
-	if err != nil {
-		return 0, err
+	written := 0
+	for {
+		end := written + maxDataChunk
+		if end > len(p) {
+			end = len(p)
+		}
+		sealed, err := c.sealer.Seal(p[written:end])
+		if err != nil {
+			return written, err
+		}
+		var lenPrefix [4]byte
+		binary.LittleEndian.PutUint32(lenPrefix[:], uint32(len(sealed)))
+		if _, err := c.rw.Write(lenPrefix[:]); err != nil {
+			return written, err
+		}
+		if _, err := c.rw.Write(sealed); err != nil {
+			return written, err
+		}
+		written = end
+		if written >= len(p) {
+			return written, nil
+		}
 	}
-	var lenPrefix [4]byte
-	binary.LittleEndian.PutUint32(lenPrefix[:], uint32(len(sealed)))
-	if _, err := c.rw.Write(lenPrefix[:]); err != nil {
-		return 0, err
-	}
-	if _, err := c.rw.Write(sealed); err != nil {
-		return 0, err
-	}
-	return len(p), nil
 }
 
 // Read serves plaintext bytes, unsealing another data message when the buffer
@@ -188,6 +210,9 @@ func (c *sealedConn) fill() error {
 		return err
 	}
 	size := binary.LittleEndian.Uint32(lenPrefix[:])
+	if size > maxDataFrame {
+		return fmt.Errorf("nns: data message too large (%d bytes)", size)
+	}
 	payload := make([]byte, size)
 	if _, err := io.ReadFull(c.rw, payload); err != nil {
 		return err

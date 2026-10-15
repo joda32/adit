@@ -80,6 +80,7 @@ const pullTemplate = `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelo
                     <ad:control criticality="true" type="1.2.840.113556.1.4.801">
                        <ad:controlValue xsi:type="xsd:base64Binary">MIQAAAADAgEH</ad:controlValue>
                 </ad:control>
+                </ad:controls>
         </wsen:Pull>
     </s:Body>
 </s:Envelope>`
@@ -97,4 +98,18 @@ func selectionProperties(attributes []string) string {
 
 func fill(tmpl string, kv ...string) string {
 	return strings.NewReplacer(kv...).Replace(tmpl)
+}
+
+// escapeXML escapes a value that is interpolated into SOAP element text (the
+// LDAP filter, base DN and enumeration context). Without it a value containing
+// '&', '<' or '>' — legal in a DN or a dynamic -query — produces malformed XML
+// or collapses entities. The DC's (and our own) XML parser unescapes it back.
+func escapeXML(s string) string {
+	return strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&apos;",
+	).Replace(s)
 }

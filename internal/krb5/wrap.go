@@ -117,6 +117,13 @@ func (s *Session) Unseal(token []byte) ([]byte, error) {
 	if s.Verify && flags&flagSentByAcceptor != s.expectAcceptorFlag {
 		return nil, fmt.Errorf("krb5: wrap token has unexpected sender role")
 	}
+	// Reject replayed / reordered tokens: the cleartext header carries the
+	// sender's sequence number, which must match the next expected value.
+	if s.Verify {
+		if seq := binary.BigEndian.Uint64(token[8:16]); seq != s.recvSeq {
+			return nil, fmt.Errorf("krb5: wrap token sequence %d, expected %d", seq, s.recvSeq)
+		}
+	}
 	ec := int(binary.BigEndian.Uint16(token[4:6]))
 	rrc := int(binary.BigEndian.Uint16(token[6:8]))
 

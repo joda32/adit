@@ -80,13 +80,22 @@ func ParseFileTime(s string) (time.Time, bool) {
 // GeneralizedTimeToTime parses LDAP GeneralizedTime (YYYYMMDDHHMMSS[.f][Z]).
 func GeneralizedTimeToTime(s string) (time.Time, bool) {
 	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, "Z")
 	if len(s) < 14 {
 		return time.Time{}, false
 	}
 	t, err := time.Parse("20060102150405", s[:14])
 	if err != nil {
 		return time.Time{}, false
+	}
+	// Timezone: either a trailing 'Z' (UTC) or a numeric +/-HHMM offset after
+	// the optional fractional seconds. A non-Z offset must be applied, not
+	// ignored, or the time would be wrong by that offset.
+	rest := strings.TrimRight(s[14:], "Z")
+	if i := strings.IndexAny(rest, "+-"); i >= 0 {
+		if z, err := time.Parse("-0700", rest[i:]); err == nil {
+			_, offset := z.Zone()
+			t = t.Add(-time.Duration(offset) * time.Second)
+		}
 	}
 	return t.UTC(), true
 }

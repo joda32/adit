@@ -251,12 +251,16 @@ func cellValue(t *collect.Table, row int, header string) string {
 }
 
 func eq(want string) func(string) bool { return func(s string) bool { return s == want } }
+
+// in matches case-insensitively: it is used for the "Risk Level" column, whose
+// values arrive in mixed case (e.g. the collector emits title-case "Medium" for
+// some ADCS templates), so an exact-case set would silently undercount.
 func in(vals ...string) func(string) bool {
 	set := map[string]bool{}
 	for _, v := range vals {
-		set[v] = true
+		set[strings.ToUpper(v)] = true
 	}
-	return func(s string) bool { return set[s] }
+	return func(s string) bool { return set[strings.ToUpper(s)] }
 }
 
 func levelIf(cond bool, level string) string {

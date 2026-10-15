@@ -80,6 +80,11 @@ const (
 // field is at most 5 bytes (a 32-bit value, 7 bits per byte). [MC-NMF] 2.2.2.
 const maxSizeFieldLen = 5
 
+// maxRecordSize bounds a sized record's payload so a malicious or corrupt size
+// field cannot drive a huge allocation. 64 MiB matches WCF's default
+// maxReceivedMessageSize, comfortably above any real directory response.
+const maxRecordSize = 64 << 20
+
 // encodeSize encodes a payload length using the MC-NMF multi-byte integer
 // scheme: 7 value bits per byte, high bit set on every byte except the last.
 func encodeSize(size int) []byte {
@@ -207,6 +212,9 @@ func readRecord(r io.Reader) (RecordType, []byte, error) {
 		n, err := readSize(r)
 		if err != nil {
 			return typ, nil, err
+		}
+		if n < 0 || n > maxRecordSize {
+			return typ, nil, fmt.Errorf("nmf: record size out of range (%d bytes)", n)
 		}
 		buf := make([]byte, n)
 		if _, err := io.ReadFull(r, buf); err != nil {

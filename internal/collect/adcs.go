@@ -153,6 +153,9 @@ func aceIsDangerousWrite(ace sd.ACE) bool {
 	if ace.Type != sd.AceTypeAccessAllowed && ace.Type != sd.AceTypeAccessAllowedObject {
 		return false
 	}
+	if ace.Flags&sd.AceFlagInheritOnly != 0 {
+		return false // applies to child objects only, not this template
+	}
 	if ace.Mask&dangerousWriteMask != 0 {
 		return true
 	}
@@ -268,7 +271,9 @@ func AssessTemplate(o *adws.Object, domainSID string) TemplateAssessment {
 		NameFlag:                nameFlag,
 		KeyFlag:                 keyFlag,
 	}
-	noSecurityExtension := enrollFlag&0x80000000 != 0
+	// CT_FLAG_NO_SECURITY_EXTENSION in msPKI-Enrollment-Flag is 0x00080000
+	// ([MS-CRTD] 2.27); bit 31 (0x80000000) is not a defined flag.
+	noSecurityExtension := enrollFlag&0x00080000 != 0
 	authorizedSignatures := raSig > 0
 
 	var ekus []string

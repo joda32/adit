@@ -13,12 +13,22 @@ type memberInfo struct {
 	accountType string
 }
 
+// pgPrincipal is a user/computer carrying a primaryGroupID, used to expand
+// primary-group membership (which is not stored in a group's member attribute).
+type pgPrincipal struct {
+	username       string
+	sid            string
+	dn             string
+	primaryGroupID string
+	accountType    string
+}
+
 // GroupMembers expands group memberships. It builds a DN→principal cache from
 // bulk user/group/computer queries so most members resolve without a per-member
 // round-trip; cross-domain (foreign) members are labelled without any lookup,
 // and rare cache misses fall back to a single lookup on the member DN.
 func (c *Collector) GroupMembers() (*Table, error) {
-	cache, err := c.buildDNCache()
+	cache, pgMembers, err := c.buildDNCache()
 	if err != nil {
 		return nil, err
 	}
@@ -47,28 +57,58 @@ func (c *Collector) GroupMembers() (*Table, error) {
 			t.Rows = append(t.Rows, r.cells)
 		}
 	}
+
+	// Expand primary-group membership (primaryGroupID -> Domain Users / Domain
+	// Computers / Domain Controllers, …), which is never listed in a group's
+	// member attribute and so is missed by the member expansion above.
+	groupNameBySID := map[string]string{}
+	for _, info := range cache {
+		if info.accountType == "group" && info.sid != "" {
+			groupNameBySID[info.sid] = info.username
+		}
+	}
+	for _, m := range pgMembers {
+		if m.primaryGroupID == "" || m.sid == "" {
+			continue
+		}
+		name, ok := groupNameBySID[domainSIDOf(m.sid)+"-"+m.primaryGroupID]
+		if !ok {
+			continue
+		}
+		var r row
+		r.str(name)
+		r.str(m.username)
+		r.str(firstCN(m.dn))
+		r.str(m.sid)
+		r.str(m.accountType + " (primary group)")
+		t.Rows = append(t.Rows, r.cells)
+	}
 	return t, nil
 }
 
-// buildDNCache bulk-loads users, groups and computers into a lower(DN)->info map.
-func (c *Collector) buildDNCache() (map[string]memberInfo, error) {
+// buildDNCache bulk-loads users, groups and computers into a lower(DN)->info
+// map, and returns the users/computers carrying a primaryGroupID (in query
+// order) so primary-group membership can be expanded deterministically.
+func (c *Collector) buildDNCache() (map[string]memberInfo, []pgPrincipal, error) {
 	cache := map[string]memberInfo{}
+	var pg []pgPrincipal
 
 	users, err := c.q.Query(c.baseDN, "(&(objectCategory=person)(objectClass=user))",
-		[]string{"distinguishedName", "sAMAccountName", "objectSid"})
+		[]string{"distinguishedName", "sAMAccountName", "objectSid", "primaryGroupID"})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, o := range users {
-		cache[strings.ToLower(text(o, "distinguishedName"))] = memberInfo{
-			username: text(o, "sAMAccountName"), sid: sidText(o, "objectSid"), accountType: "user",
-		}
+		dn, sam, sid := text(o, "distinguishedName"), text(o, "sAMAccountName"), sidText(o, "objectSid")
+		cache[strings.ToLower(dn)] = memberInfo{username: sam, sid: sid, accountType: "user"}
+		pg = append(pg, pgPrincipal{username: sam, sid: sid, dn: dn,
+			primaryGroupID: text(o, "primaryGroupID"), accountType: "user"})
 	}
 
 	groups, err := c.q.Query(c.baseDN, "(objectCategory=group)",
 		[]string{"distinguishedName", "name", "objectSid"})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, o := range groups {
 		cache[strings.ToLower(text(o, "distinguishedName"))] = memberInfo{
@@ -77,16 +117,26 @@ func (c *Collector) buildDNCache() (map[string]memberInfo, error) {
 	}
 
 	computers, err := c.q.Query(c.baseDN, "(objectCategory=computer)",
-		[]string{"distinguishedName", "sAMAccountName", "objectSid"})
+		[]string{"distinguishedName", "sAMAccountName", "objectSid", "primaryGroupID"})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, o := range computers {
-		cache[strings.ToLower(text(o, "distinguishedName"))] = memberInfo{
-			username: text(o, "sAMAccountName"), sid: sidText(o, "objectSid"), accountType: "computer",
-		}
+		dn, sam, sid := text(o, "distinguishedName"), text(o, "sAMAccountName"), sidText(o, "objectSid")
+		cache[strings.ToLower(dn)] = memberInfo{username: sam, sid: sid, accountType: "computer"}
+		pg = append(pg, pgPrincipal{username: sam, sid: sid, dn: dn,
+			primaryGroupID: text(o, "primaryGroupID"), accountType: "computer"})
 	}
-	return cache, nil
+	return cache, pg, nil
+}
+
+// domainSIDOf returns the domain portion of a SID (everything before the last
+// "-", i.e. dropping the RID).
+func domainSIDOf(sid string) string {
+	if i := strings.LastIndex(sid, "-"); i >= 0 {
+		return sid[:i]
+	}
+	return sid
 }
 
 // resolveMember resolves one member DN to a principal.
@@ -131,6 +181,8 @@ func accountTypeFromClasses(o *adws.Object) string {
 		return "group"
 	case classes["msds-managedserviceaccount"] || classes["msds-groupmanagedserviceaccount"]:
 		return "msa"
+	case classes["foreignsecurityprincipal"]:
+		return "foreignSecurityPrincipal"
 	default:
 		return "unknown"
 	}
